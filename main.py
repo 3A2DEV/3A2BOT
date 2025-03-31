@@ -67,8 +67,20 @@ def comment_with_link(issue, path):
 def add_label(item, label):
     labels = [l.name for l in item.labels]
     if label not in labels:
-        item.add_to_labels(label)
-        print(f"🏷️ Added label '{label}' to #{item.number}")
+        try:
+            item.add_to_labels(label)
+            print(f"🏷️ Added label '{label}' to #{item.number}")
+        except Exception as e:
+            print(f"❌ Failed to add label '{label}' to #{item.number}: {e}")
+
+def remove_label(item, label):
+    labels = [l.name for l in item.labels]
+    if label in labels:
+        try:
+            item.remove_from_labels(label)
+            print(f"❌ Removed label '{label}' from #{item.number}")
+        except Exception as e:
+            print(f"⚠️ Failed to remove label '{label}' from #{item.number}: {e}")
 
 def check_ci_errors_and_comment(pr):
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
@@ -79,9 +91,15 @@ def check_ci_errors_and_comment(pr):
 
     latest_run = runs[0]
 
+    if latest_run.status != "completed":
+        print("🕒 CI is still running...")
+        return
+
     if latest_run.conclusion == "success":
-        print("✅ CI passed successfully.")
+        print(f"✅ CI passed for PR #{pr.number}. Adding 'success' label.")
         add_label(pr, "success")
+        remove_label(pr, "stale_ci")
+        remove_label(pr, "needs_revision")
         return
 
     logs_url = latest_run.logs_url
@@ -103,8 +121,10 @@ def check_ci_errors_and_comment(pr):
                     errors_found.append((file_name, snippet))
 
     if not errors_found:
-        print("✅ No CI errors found.")
+        print(f"✅ No CI errors found in logs for PR #{pr.number}. Adding 'success' label.")
         add_label(pr, "success")
+        remove_label(pr, "stale_ci")
+        remove_label(pr, "needs_revision")
         return
 
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
@@ -115,12 +135,14 @@ def check_ci_errors_and_comment(pr):
     for comment in existing_comments:
         if "CI Test Failures Detected" in comment.body:
             print("💬 Skipping duplicate CI comment.")
-            return
+            break
+    else:
+        pr.create_issue_comment(comment_body)
+        print(f"✅ Posted CI error summary on PR #{pr.number}")
 
-    pr.create_issue_comment(comment_body)
-    print(f"✅ Posted CI error summary on PR #{pr.number}")
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
+    remove_label(pr, "success")
 
 def get_unprocessed_items():
     issues = repo.get_issues(state="open", sort="created", direction="desc")
@@ -148,8 +170,8 @@ def bot_loop():
         with open(PROCESSED_FILE, "w") as f:
             json.dump(list(processed), f)
 
-        print("⏳ Sleeping for 3 minutes...")
-        time.sleep(180)
+        print("⏳ Sleeping for 5 minutes...")
+        time.sleep(300)
 
 def start_bot():
     Thread(target=bot_loop).start()
