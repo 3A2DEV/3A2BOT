@@ -24,11 +24,16 @@ g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
 # Load processed issues/PRs
+processed = set()
 if os.path.exists(PROCESSED_FILE):
-    with open(PROCESSED_FILE) as f:
-        processed = set(json.load(f))
-else:
-    processed = set()
+    try:
+        with open(PROCESSED_FILE) as f:
+            data = f.read().strip()
+            if data:
+                processed = set(json.loads(data))
+    except Exception as e:
+        print(f"⚠️ Failed to load processed.json: {e}")
+
 
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
