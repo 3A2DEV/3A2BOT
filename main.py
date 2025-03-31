@@ -6,6 +6,9 @@ import os
 import re
 import json
 import time
+import io
+import zipfile
+import requests
 from threading import Thread
 from flask import Flask
 from github import Github
@@ -20,10 +23,11 @@ GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
 
+# Setup GitHub client
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# Load processed issues/PRs
+# Load processed items
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
@@ -34,6 +38,12 @@ if os.path.exists(PROCESSED_FILE):
     except Exception as e:
         print(f"⚠️ Failed to load processed.json: {e}")
 
+# Error markers for detecting CI issues
+error_markers = [
+    "FAILED", "failed", "ERROR", "Traceback (most recent call last):",
+    "ModuleNotFoundError", "ImportError", "SyntaxError", "E   ", "assert",
+    "ERROR! ", "fatal:", "task failed", "collection failure", "unexpected failure"
+]
 
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
@@ -54,32 +64,95 @@ def comment_with_link(issue, path):
     issue.create_comment(body)
     print(f"✅ Commented on #{issue.number}")
 
+def add_label(item, label):
+    labels = [l.name for l in item.labels]
+    if label not in labels:
+        item.add_to_labels(label)
+        print(f"🏷️ Added label '{label}' to #{item.number}")
+
+def check_ci_errors_and_comment(pr):
+    print(f"🔎 Checking CI logs for PR #{pr.number}...")
+    runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
+    if runs.totalCount == 0:
+        print("❌ No CI workflow runs found for this PR.")
+        return
+
+    latest_run = runs[0]
+
+    if latest_run.conclusion == "success":
+        print("✅ CI passed successfully.")
+        add_label(pr, "success")
+        return
+
+    logs_url = latest_run.logs_url
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    r = requests.get(logs_url, headers=headers)
+    if r.status_code != 200:
+        print("⚠️ Failed to download logs")
+        return
+
+    errors_found = []
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
+        for file_name in zip_file.namelist():
+            if not file_name.endswith(".txt"):
+                continue
+            with zip_file.open(file_name) as f:
+                content = f.read().decode("utf-8", errors="ignore")
+                if any(marker in content for marker in error_markers):
+                    snippet = "\n".join(content.splitlines()[:50])
+                    errors_found.append((file_name, snippet))
+
+    if not errors_found:
+        print("✅ No CI errors found.")
+        add_label(pr, "success")
+        return
+
+    comment_body = "🚨 **CI Test Failures Detected**\n\n"
+    for file_name, snippet in errors_found:
+        comment_body += f"**{file_name}**\n```text\n{snippet[:1000]}\n```\n\n"
+
+    existing_comments = pr.get_issue_comments()
+    for comment in existing_comments:
+        if "CI Test Failures Detected" in comment.body:
+            print("💬 Skipping duplicate CI comment.")
+            return
+
+    pr.create_issue_comment(comment_body)
+    print(f"✅ Posted CI error summary on PR #{pr.number}")
+    add_label(pr, "stale_ci")
+    add_label(pr, "needs_revision")
+
 def get_unprocessed_items():
     issues = repo.get_issues(state="open", sort="created", direction="desc")
     return [i for i in issues if i.number not in processed]
 
 def bot_loop():
     global processed
+    print("🤖 Bot loop started...")
     while True:
-        print("🔍 Checking issues and PRs...")
         for item in get_unprocessed_items():
+            print(f"🔄 Processing #{item.number}...")
             body = item.body or ""
             component = parse_component_name(body)
             if component:
-                path = f"plugins/modules/{component}.py"
-                if file_exists(path):
-                    comment_with_link(item, path)
+                file_path = f"plugins/modules/{component}.py"
+                if file_exists(file_path):
+                    comment_with_link(item, file_path)
+
+            if item.pull_request:
+                pr = repo.get_pull(item.number)
+                check_ci_errors_and_comment(pr)
+
             processed.add(item.number)
 
         with open(PROCESSED_FILE, "w") as f:
             json.dump(list(processed), f)
 
-        print("⏱ Sleeping for 2 minutes...")
-        time.sleep(120)
+        print("⏳ Sleeping for 3 minutes...")
+        time.sleep(180)
 
 def start_bot():
-    thread = Thread(target=bot_loop)
-    thread.start()
+    Thread(target=bot_loop).start()
 
 start_bot()
 
