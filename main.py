@@ -139,7 +139,16 @@ def check_ci_errors_and_comment(pr):
 
 def get_unprocessed_items():
     issues = repo.get_issues(state="open", sort="created", direction="desc")
-    return [i for i in issues if i.number not in processed]
+    items = []
+    for i in issues:
+        labels = [l.name for l in i.labels]
+        if (
+            i.number not in processed
+            or any(label in labels for label in ["success", "stale_ci", "needs_revision"])
+        ):
+            items.append(i)
+    return items
+
 
 def bot_loop():
     global processed
