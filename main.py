@@ -19,47 +19,69 @@ app = Flask(__name__)
 def home():
     return "3A2DEV Bot is alive!", 200
 
+# Configuration and constants
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
 
-# GitHub repo
+# Initialize GitHub repository
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# Load processed issues
+# Load processed issue/PR numbers
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
         with open(PROCESSED_FILE) as f:
             processed = set(json.load(f))
     except Exception as e:
-        print(f"⚠️ Failed to load processed.json: {e}")
+        print(f"⚠️ Failed to load {PROCESSED_FILE}: {e}")
 
-# Error markers
+# Error markers for identifying failures in logs
 error_markers = [
-    "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
-    "ImportError", "ModuleNotFoundError", "assert",
-    "ERROR! ", "fatal:", "task failed", "collection failure",
-    "Test failures:", "ansible-test sanity", "invalid-documentation-markup",
-    "non-existing option", "The test 'ansible-test sanity", "sanity failure",
-    "test failed", "invalid value"
+    "failed", "error", "traceback", "syntaxerror",
+    "importerror", "modulenotfounderror", "assert",
+    "error! ", "fatal:", "task failed", "collection failure",
+    "test failures:", "ansible-test sanity", "invalid-documentation-markup",
+    "non-existing option", "sanity failure", "test failed", "invalid value"
 ]
 
+# Patterns to skip irrelevant lines
 skip_patterns = re.compile(
-    r"coverage:|##\\[group\\]|shell:|Cleaning up orphan processes|core-github-repository-slug|pull-request-change-detection",
+    r"coverage:|##\[group\]|shell:|Cleaning up orphan processes|core-github-repository-slug|pull-request-change-detection",
     re.IGNORECASE
 )
 
-def extract_first_real_error(lines):
+def extract_error_snippet(lines):
+    """
+    Scan through all lines in the log file to extract candidate error snippets.
+    Prioritize snippets containing specific markers.
+    """
+    candidates = []
     for i, line in enumerate(lines):
-        lower = line.lower()
-        if any(marker in lower for marker in error_markers):
-            if not skip_patterns.search(lower):
-                return "\n".join(lines[max(0, i-3):i+7])
-    return None
+        line_lower = line.lower()
+        if any(marker in line_lower for marker in error_markers) and not skip_patterns.search(line_lower):
+            # Capture a snippet: 3 lines before and 7 lines after the error line
+            snippet = "\n".join(lines[max(0, i-3):min(len(lines), i+7)])
+            candidates.append((i, snippet))
+    
+    if not candidates:
+        return None
+
+    # Prioritize snippets that include highly specific error markers
+    prioritized_markers = ["invalid-documentation-markup", "non-existing option"]
+    for _, snippet in candidates:
+        snippet_lower = snippet.lower()
+        if any(pm in snippet_lower for pm in prioritized_markers):
+            return snippet
+
+    # Fallback: return the snippet that appears latest in the log
+    return candidates[-1][1]
 
 def archive_old_comment(pr):
+    """
+    Archive the old bot comment by wrapping it in a collapsible <details> tag.
+    """
     comments = list(pr.get_issue_comments())
     bot_comments = [c for c in comments if "CI Test Failures Detected" in c.body]
     if bot_comments:
@@ -74,6 +96,9 @@ def archive_old_comment(pr):
             print("📦 Archived old CI comment")
 
 def post_or_update_comment(pr, new_body):
+    """
+    Post a new comment or update the existing one if the content has changed.
+    """
     existing = list(pr.get_issue_comments())
     bot_comments = [c for c in existing if "CI Test Failures Detected" in c.body]
     if bot_comments:
@@ -88,7 +113,21 @@ def post_or_update_comment(pr, new_body):
         pr.create_issue_comment(new_body)
         print("💬 Posted first CI failure comment")
 
+def match_job_for_log(normalized_folder, job_lookup):
+    """
+    Attempt to match the normalized folder name from the log file with a job from job_lookup.
+    The match is bidirectional: it checks if one string is contained in the other.
+    """
+    for key, job in job_lookup.items():
+        if normalized_folder in key or key in normalized_folder:
+            return job
+    return None
+
 def check_ci_errors_and_comment(pr):
+    """
+    Check CI workflow logs for the given pull request, extract error snippets for failed jobs,
+    and update or post a comment on the PR with the relevant error details.
+    """
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
     if runs.totalCount == 0:
@@ -107,6 +146,7 @@ def check_ci_errors_and_comment(pr):
         print("⚠️ Failed to download logs")
         return
 
+    # Build a lookup for failed jobs using a normalized key
     job_lookup = {}
     failed_jobs = set()
     jobs_url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs/{latest_run.id}/jobs"
@@ -127,32 +167,42 @@ def check_ci_errors_and_comment(pr):
         archive_old_comment(pr)
         return
 
+    # Extract error snippets from logs
     job_logs = {}
-    seen_jobs = set()
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
 
+            # Determine folder name from the file path
             folder = file_name.split("/")[0]
-            base_name = re.sub(r"^\d+_", "", folder).replace(".txt", "").strip()
-            normalized = re.sub(r"[^a-z0-9]", "_", base_name.lower())
-            matched_job = next((job_lookup[k] for k in job_lookup if normalized in k), None)
+            # Normalize folder name by removing any leading numbers and non-alphanumerics
+            normalized_folder = re.sub(r"^\d+_", "", folder).replace(".txt", "").strip().lower()
+            normalized_folder = re.sub(r"[^a-z0-9]", "_", normalized_folder)
+            
+            # Debug: print the normalized folder and job keys
+            # print(f"Debug: normalized_folder='{normalized_folder}', job keys: {list(job_lookup.keys())}")
 
-            if not matched_job or matched_job in seen_jobs:
+            matched_job = match_job_for_log(normalized_folder, job_lookup)
+            if not matched_job or matched_job in job_logs:
                 continue
 
             with zip_file.open(file_name) as f:
-                lines = f.read().decode("utf-8", errors="ignore").splitlines()
-                snippet = extract_first_real_error(lines)
+                try:
+                    content = f.read().decode("utf-8", errors="ignore")
+                except Exception as ex:
+                    print(f"⚠️ Error reading {file_name}: {ex}")
+                    continue
+                lines = content.splitlines()
+                snippet = extract_error_snippet(lines)
                 if snippet:
                     job_logs[matched_job] = snippet
-                    seen_jobs.add(matched_job)
 
     if not job_logs:
         print("❌ Some jobs failed, but no valid error snippets found.")
         return
 
+    # Build the PR comment body with error details for each failed job
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job, snippet in job_logs.items():
         comment_body += f"### ⚙️ {job}\n"
@@ -161,17 +211,26 @@ def check_ci_errors_and_comment(pr):
     post_or_update_comment(pr, comment_body)
 
 def parse_component_name(body):
+    """
+    Parse the component name from the issue/PR body using a header.
+    """
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
     return match.group(1) if match else None
 
 def file_exists(path):
+    """
+    Check if a given file exists in the repository.
+    """
     try:
         repo.get_contents(path)
         return True
-    except:
+    except Exception:
         return False
 
 def comment_with_link(issue, path):
+    """
+    Comment on the issue/PR with a link to the identified file.
+    """
     url = f"https://github.com/{REPO_NAME}/blob/main/{path}"
     body = f"""Files identified in the description:
 
@@ -188,10 +247,18 @@ def remove_label(item, label):
         item.remove_from_labels(label)
 
 def get_unprocessed_items():
+    """
+    Retrieve all open issues, filtering those that haven't been processed yet
+    or have specific labels indicating further review.
+    """
     issues = repo.get_issues(state="open", sort="created", direction="desc")
     return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision"] for l in i.labels)]
 
 def bot_loop():
+    """
+    Main bot loop: processes unprocessed issues/PRs, checks CI errors,
+    and updates comments accordingly.
+    """
     global processed
     print("🤖 Bot loop started...")
     while True:
@@ -201,6 +268,7 @@ def bot_loop():
                 pr = repo.get_pull(item.number)
                 check_ci_errors_and_comment(pr)
 
+            # Optionally comment with a module link if a component is mentioned
             body = item.body or ""
             component = parse_component_name(body)
             if component:
@@ -210,6 +278,7 @@ def bot_loop():
 
             processed.add(item.number)
 
+        # Save processed issue/PR numbers
         with open(PROCESSED_FILE, "w") as f:
             json.dump(list(processed), f)
 
@@ -219,6 +288,7 @@ def bot_loop():
 def start_bot():
     Thread(target=bot_loop).start()
 
+# Start the bot loop and the web server
 start_bot()
 
 if __name__ == "__main__":
