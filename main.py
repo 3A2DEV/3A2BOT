@@ -156,16 +156,33 @@ def check_ci_errors_and_comment(pr):
                         break
 
     errors_by_job = {k: v for k, v in job_logs.items() if v}
-    if scanned_logs > 0 and not errors_by_job:
-        print(f"✅ No CI errors for PR #{pr.number}.")
+
+    # If no logs scanned or no job matched, skip
+    if scanned_logs == 0:
+        print("⚠️ No logs were scanned at all.")
+        return
+
+    # If logs scanned but no errors detected
+    if not errors_by_job:
+        print(f"✅ No CI errors found for PR #{pr.number}.")
+        existing_comments = list(pr.get_issue_comments())
+        bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
+        latest_comment = bot_comments[-1] if bot_comments else None
+
+        if latest_comment and "<details>" not in latest_comment.body:
+            archived_body = f"""<details>
+    <summary>🕙 Outdated CI result (auto-archived by bot)</summary>
+
+    {latest_comment.body}
+    </details>"""
+            latest_comment.edit(archived_body)
+            print(f"📦 Archived old CI comment on PR #{pr.number}")
+
         add_label(pr, "success")
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
         return
 
-    if not errors_by_job:
-        print("⚠️ No logs were scanned, skipping.")
-        return
 
     # === Build comment body ===
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
