@@ -101,19 +101,24 @@ def check_ci_errors_and_comment(pr):
 
     logs_url = latest_run.logs_url
     print(f"📦 Downloading logs from: {logs_url}")
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
     r = requests.get(logs_url, headers=headers)
     if r.status_code != 200:
         print("⚠️ Failed to download logs")
         return
 
-    # Map zip folders to real job names
+    # === Get real job names via GitHub REST API ===
     job_lookup = {}
-    jobs = repo.get_workflow_run(latest_run.id).get_jobs()
-    for job in jobs:
-        key = re.sub(r"[^a-z0-9]", "_", job.name.lower())
-        job_lookup[key] = job.name
+    jobs_url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs/{latest_run.id}/jobs"
+    jr = requests.get(jobs_url, headers=headers)
+    if jr.status_code == 200:
+        for job in jr.json().get("jobs", []):
+            key = re.sub(r"[^a-z0-9]", "_", job["name"].lower())
+            job_lookup[key] = job["name"]
+    else:
+        print("⚠️ Failed to get job names from GitHub API")
 
+    # === Scan log files ===
     errors_by_job = {}
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
@@ -158,12 +163,10 @@ def check_ci_errors_and_comment(pr):
     bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
     latest_comment = bot_comments[-1] if bot_comments else None
 
-    # Compare current vs previous comment content
     if latest_comment and comment_body.strip() in latest_comment.body:
         print("🔁 CI errors unchanged — skipping comment.")
         return
 
-    # Archive old comment if present
     if latest_comment and "<details>" not in latest_comment.body:
         archived_body = f"""<details>
 <summary>🕙 Outdated CI result (auto-archived by bot)</summary>
@@ -173,7 +176,6 @@ def check_ci_errors_and_comment(pr):
         latest_comment.edit(archived_body)
         print(f"📦 Archived old CI comment on PR #{pr.number}")
 
-    # Post new comment
     pr.create_issue_comment(comment_body)
     print(f"💬 Posted new CI failure comment on PR #{pr.number}")
 
