@@ -118,51 +118,56 @@ def check_ci_errors_and_comment(pr):
     else:
         print("⚠️ Failed to get job names from GitHub API")
 
-    # === Scan log files ===
+    # === Scan log files grouped by job folder ===
     job_logs = {}
     scanned_logs = 0
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
+        folders = {}
+
+        # Group files by job folder
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
-
-            scanned_logs += 1
             folder = file_name.split("/")[0]
+            folders.setdefault(folder, []).append(file_name)
+
+        for folder, files in folders.items():
+            scanned_logs += 1
             normalized = re.sub(r"^\d+_", "", folder.lower())
             normalized = re.sub(r"[^a-z0-9]", "_", normalized)
 
+            # Fuzzy match to job name
             job_name = None
             for key, name in job_lookup.items():
                 if key.startswith(normalized) or normalized in key:
                     job_name = name
                     break
             if not job_name:
-                job_name = folder.replace("_", " ")
+                job_name = re.sub(r"^\d+_", "", folder).replace("_", " ")
 
-            print(f"🔍 Scanning log: {file_name} for job: {job_name}")
+            print(f"🔍 Scanning job folder: {folder} → {job_name}")
 
-            with zip_file.open(file_name) as f:
-                content = f.read().decode("utf-8", errors="ignore")
-                lines = content.splitlines()
-                for i, line in enumerate(lines):
-                    normalized_line = line.strip().lower()
-                    if any(marker.lower() in normalized_line for marker in error_markers):
-                        print(f"❌ Error in '{job_name}' at line: {line.strip()}")
-                        start = max(0, i - 5)
-                        end = min(len(lines), i + 10)
-                        snippet = "\n".join(lines[start:end])
-                        job_logs.setdefault(job_name, []).append(snippet)
-                        break
+            for file_name in files:
+                with zip_file.open(file_name) as f:
+                    content = f.read().decode("utf-8", errors="ignore")
+                    lines = content.splitlines()
+                    for i, line in enumerate(lines):
+                        normalized_line = line.strip().lower()
+                        if any(marker.lower() in normalized_line for marker in error_markers):
+                            print(f"❌ Error in job '{job_name}' from file '{file_name}'")
+                            start = max(0, i - 5)
+                            end = min(len(lines), i + 10)
+                            snippet = "\n".join(lines[start:end])
+                            job_logs.setdefault(job_name, []).append(snippet)
+                            break
 
     errors_by_job = {k: v for k, v in job_logs.items() if v}
 
-    # If no logs scanned or no job matched, skip
     if scanned_logs == 0:
         print("⚠️ No logs were scanned at all.")
         return
 
-    # If logs scanned but no errors detected
     if not errors_by_job:
         print(f"✅ No CI errors found for PR #{pr.number}.")
         existing_comments = list(pr.get_issue_comments())
@@ -171,10 +176,10 @@ def check_ci_errors_and_comment(pr):
 
         if latest_comment and "<details>" not in latest_comment.body:
             archived_body = f"""<details>
-    <summary>🕙 Outdated CI result (auto-archived by bot)</summary>
+<summary>🕙 Outdated CI result (auto-archived by bot)</summary>
 
-    {latest_comment.body}
-    </details>"""
+{latest_comment.body}
+</details>"""
             latest_comment.edit(archived_body)
             print(f"📦 Archived old CI comment on PR #{pr.number}")
 
@@ -182,7 +187,6 @@ def check_ci_errors_and_comment(pr):
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
         return
-
 
     # === Build comment body ===
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
