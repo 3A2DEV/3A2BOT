@@ -2,7 +2,7 @@
 # GNU General Public License v3.0+
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from flask import Flask
+from flask import Flask, jsonify
 from bot import start_bot
 
 app = Flask(__name__)
