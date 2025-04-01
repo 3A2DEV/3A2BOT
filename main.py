@@ -196,7 +196,7 @@ def check_ci_errors_and_comment(pr):
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job, combined_snippet in job_logs.items():
         comment_body += f"### ⚙️ {job}\n"
-        comment_body += f"```text\n{combined_snippet[:1000]}\n```\n\n"
+        comment_body += f"```bash\n{combined_snippet[:1000]}\n```\n\n"
 
     post_or_update_comment(pr, comment_body)
     
