@@ -132,17 +132,32 @@ def check_ci_errors_and_comment(pr):
 
             job_name = job_lookup.get(normalized, folder.replace("_", " "))
 
-            with zip_file.open(file_name) as f:
-                content = f.read().decode("utf-8", errors="ignore").lower()
-                lines = content.splitlines()
-                for i, line in enumerate(lines):
-                    if any(marker.lower() in line for marker in error_markers):
-                        print(f"❌ Match in job '{job_name}': {line.strip()}")
-                        start = max(0, i - 5)
-                        end = min(len(lines), i + 10)
-                        snippet = "\n".join(lines[start:end])
-                        errors_by_job.setdefault(job_name, []).append(snippet)
-                        break
+            with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
+                job_logs = {}
+
+                for file_name in zip_file.namelist():
+                    if not file_name.endswith(".txt"):
+                        continue
+
+                    folder = file_name.split("/")[0]
+                    normalized = re.sub(r"^\d+_", "", folder.lower())
+                    normalized = re.sub(r"[^a-z0-9]", "_", normalized)
+                    job_name = job_lookup.get(normalized, folder.replace("_", " "))
+
+                    with zip_file.open(file_name) as f:
+                        content = f.read().decode("utf-8", errors="ignore").lower()
+                        lines = content.splitlines()
+                        for i, line in enumerate(lines):
+                            if any(marker.lower() in line for marker in error_markers):
+                                print(f"❌ Match in job '{job_name}' file '{file_name}': {line.strip()}")
+                                start = max(0, i - 5)
+                                end = min(len(lines), i + 10)
+                                snippet = "\n".join(lines[start:end])
+                                job_logs.setdefault(job_name, []).append(snippet)
+                                break  # only skip current .txt, not whole job
+
+                errors_by_job = {k: v for k, v in job_logs.items() if v}
+
 
     if not errors_by_job:
         print(f"✅ No CI errors for PR #{pr.number}.")
