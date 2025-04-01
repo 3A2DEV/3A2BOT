@@ -19,7 +19,7 @@ app = Flask(__name__)
 def home():
     return "3A2DEV Bot is alive!", 200
 
-# === Configuration ===
+# === Config ===
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
@@ -27,7 +27,7 @@ PROCESSED_FILE = "processed.json"
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# === Load previously processed PRs ===
+# === Load processed PRs ===
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
@@ -38,17 +38,17 @@ if os.path.exists(PROCESSED_FILE):
     except Exception as e:
         print(f"⚠️ Failed to load processed.json: {e}")
 
-# === Error markers to detect ===
+# === Error Markers ===
 error_markers = [
     "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
     "ImportError", "ModuleNotFoundError", "assert",
     "ERROR! ", "fatal:", "task failed", "collection failure",
     "Test failures:", "ansible-test sanity", "invalid-documentation-markup",
-    "The test 'ansible-test sanity", "sanity failure", "test failed",
-    "invalid value", "non-existing option"
+    "non-existing option", "The test 'ansible-test sanity", "sanity failure",
+    "test failed", "invalid value"
 ]
 
-# === Component Parsing ===
+# === Utilities ===
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
     return match.group(1) if match else None
@@ -68,7 +68,6 @@ def comment_with_link(issue, path):
     issue.create_comment(body)
     print(f"✅ Commented on #{issue.number} with module path")
 
-# === Label management ===
 def add_label(item, label):
     labels = [l.name for l in item.labels]
     if label not in labels:
@@ -87,7 +86,7 @@ def remove_label(item, label):
         except Exception as e:
             print(f"⚠️ Failed to remove label '{label}' from #{item.number}: {e}")
 
-# === CI Error Detection ===
+# === CI Analysis ===
 def check_ci_errors_and_comment(pr):
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
@@ -118,13 +117,14 @@ def check_ci_errors_and_comment(pr):
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     if any(marker.lower() in line for marker in error_markers):
-                        print(f"❌ Error match in {file_name}: {line.strip()}")
+                        job_name = file_name.split("/")[0].replace("_", " ")
+                        print(f"❌ Error match in job '{job_name}': {line.strip()}")
                         start = max(0, i - 5)
                         end = min(len(lines), i + 10)
                         snippet = "\n".join(lines[start:end])
-                        errors_found.append((file_name, snippet))
-                        break  # Only first error per file
-                        
+                        errors_found.append((job_name, snippet))
+                        break
+
     if not errors_found:
         print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
@@ -132,16 +132,27 @@ def check_ci_errors_and_comment(pr):
         remove_label(pr, "needs_revision")
         return
 
+    # Build the comment body
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
-    for file_name, snippet in errors_found:
-        comment_body += f"**{file_name}**\n```text\n{snippet[:1000]}\n```\n\n"
+    for job_name, snippet in errors_found:
+        comment_body += f"### 🔧 {job_name}\n```text\n{snippet[:1000]}\n```\n\n"
 
-    existing_comments = pr.get_issue_comments()
-    if not any("CI Test Failures Detected" in c.body for c in existing_comments):
-        pr.create_issue_comment(comment_body)
-        print(f"💬 Posted CI failure comment on PR #{pr.number}")
-    else:
-        print("💬 CI error comment already exists.")
+    # Archive existing bot comments
+    existing_comments = list(pr.get_issue_comments())
+    bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
+    for old_comment in bot_comments:
+        if "<details>" not in old_comment.body:
+            archived_body = f"""<details>
+<summary>🕙 Outdated CI result (auto-archived by bot)</summary>
+
+{old_comment.body}
+</details>"""
+            old_comment.edit(archived_body)
+            print(f"📦 Archived old CI comment on PR #{pr.number}")
+
+    # Post new comment
+    pr.create_issue_comment(comment_body)
+    print(f"💬 Posted new CI failure comment on PR #{pr.number}")
 
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
@@ -186,7 +197,7 @@ def bot_loop():
         print("⏳ Sleeping for 3 minutes...")
         time.sleep(180)
 
-# === Startup ===
+# === Start Bot Thread ===
 def start_bot():
     Thread(target=bot_loop).start()
 
