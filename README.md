@@ -37,7 +37,9 @@
 ├── ci_checker.py        # Functions for processing CI logs and extracting error snippets.
 ├── github_ops.py        # Functions to manage GitHub comments and labels.
 ├── issue_utils.py       # Utility functions for processing issues and PRs.
-└── bot.py               # Main bot loop that ties everything together.
+├── bot.py               # Main bot loop that ties everything together.
+├── conftest.py          # Configuration file for coverage tests.
+└── test_bot.py          # Coverage tests file.
 ```
 
 ## Prerequisites
