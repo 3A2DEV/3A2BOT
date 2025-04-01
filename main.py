@@ -107,27 +107,38 @@ def check_ci_errors_and_comment(pr):
         print("⚠️ Failed to download logs")
         return
 
-    errors_found = []
+    # Map zip folders to real job names
+    job_lookup = {}
+    for job in latest_run.get_jobs():
+        key = re.sub(r"[^a-z0-9]", "_", job.name.lower())
+        job_lookup[key] = job.name
+
+    errors_by_job = {}
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
+
+            folder = file_name.split("/")[0]
+            normalized = re.sub(r"^\d+_", "", folder.lower())
+            normalized = re.sub(r"[^a-z0-9]", "_", normalized)
+
+            job_name = job_lookup.get(normalized, folder.replace("_", " "))
+
             with zip_file.open(file_name) as f:
                 content = f.read().decode("utf-8", errors="ignore").lower()
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     if any(marker.lower() in line for marker in error_markers):
-                        raw_job_name = file_name.split("/")[0]
-                        base_name = re.sub(r"\.txt$", "", raw_job_name)
-                        job_name = re.sub(r"^\d+_", "", base_name).replace("_", " ")
-                        print(f"❌ Error match in job '{job_name}': {line.strip()}")
+                        print(f"❌ Match in job '{job_name}': {line.strip()}")
                         start = max(0, i - 5)
                         end = min(len(lines), i + 10)
                         snippet = "\n".join(lines[start:end])
-                        errors_found.append((job_name, snippet))
+                        errors_by_job.setdefault(job_name, []).append(snippet)
                         break
 
-    if not errors_found:
+    if not errors_by_job:
         print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
         remove_label(pr, "stale_ci")
@@ -136,8 +147,10 @@ def check_ci_errors_and_comment(pr):
 
     # === Build comment body ===
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
-    for job_name, snippet in errors_found:
-        comment_body += f"### 🔧 {job_name}\n```text\n{snippet[:1000]}\n```\n\n"
+    for job_name, snippets in errors_by_job.items():
+        comment_body += f"### 🔧 {job_name}\n"
+        for snippet in snippets:
+            comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
 
     # === Check for previous bot comment ===
     existing_comments = list(pr.get_issue_comments())
