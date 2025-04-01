@@ -19,7 +19,7 @@ app = Flask(__name__)
 def home():
     return "3A2DEV Bot is alive!", 200
 
-# === Config ===
+# === Configuration ===
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
@@ -27,7 +27,7 @@ PROCESSED_FILE = "processed.json"
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# Load previously processed PRs
+# === Load previously processed PRs ===
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
@@ -38,16 +38,17 @@ if os.path.exists(PROCESSED_FILE):
     except Exception as e:
         print(f"⚠️ Failed to load processed.json: {e}")
 
-# === Error Patterns ===
+# === Error markers to detect ===
 error_markers = [
     "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
     "ImportError", "ModuleNotFoundError", "assert",
     "ERROR! ", "fatal:", "task failed", "collection failure",
     "Test failures:", "ansible-test sanity", "invalid-documentation-markup",
-    "The test 'ansible-test sanity", "sanity failure", "test failed"
+    "The test 'ansible-test sanity", "sanity failure", "test failed",
+    "invalid value", "non-existing option"
 ]
 
-# === Bot Logic ===
+# === Component Parsing ===
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
     return match.group(1) if match else None
@@ -67,6 +68,7 @@ def comment_with_link(issue, path):
     issue.create_comment(body)
     print(f"✅ Commented on #{issue.number} with module path")
 
+# === Label management ===
 def add_label(item, label):
     labels = [l.name for l in item.labels]
     if label not in labels:
@@ -85,6 +87,7 @@ def remove_label(item, label):
         except Exception as e:
             print(f"⚠️ Failed to remove label '{label}' from #{item.number}: {e}")
 
+# === CI Error Detection ===
 def check_ci_errors_and_comment(pr):
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
@@ -112,13 +115,16 @@ def check_ci_errors_and_comment(pr):
                 continue
             with zip_file.open(file_name) as f:
                 content = f.read().decode("utf-8", errors="ignore").lower()
-                for marker in error_markers:
-                    if marker.lower() in content:
-                        print(f"❌ Found '{marker}' in {file_name}")
-                        snippet = "\n".join(content.splitlines()[:50])
+                lines = content.splitlines()
+                for i, line in enumerate(lines):
+                    if any(marker.lower() in line for marker in error_markers):
+                        print(f"❌ Error match in {file_name}: {line.strip()}")
+                        start = max(0, i - 5)
+                        end = min(len(lines), i + 10)
+                        snippet = "\n".join(lines[start:end])
                         errors_found.append((file_name, snippet))
-                        break
-
+                        break  # Only first error per file
+                        
     if not errors_found:
         print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
@@ -126,7 +132,6 @@ def check_ci_errors_and_comment(pr):
         remove_label(pr, "needs_revision")
         return
 
-    # Compose error comment
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for file_name, snippet in errors_found:
         comment_body += f"**{file_name}**\n```text\n{snippet[:1000]}\n```\n\n"
@@ -142,6 +147,7 @@ def check_ci_errors_and_comment(pr):
     add_label(pr, "needs_revision")
     remove_label(pr, "success")
 
+# === PR Detection ===
 def get_unprocessed_items():
     issues = repo.get_issues(state="open", sort="created", direction="desc")
     items = []
@@ -154,6 +160,7 @@ def get_unprocessed_items():
             items.append(i)
     return items
 
+# === Bot Loop ===
 def bot_loop():
     global processed
     print("🤖 Bot loop started...")
@@ -176,10 +183,10 @@ def bot_loop():
         with open(PROCESSED_FILE, "w") as f:
             json.dump(list(processed), f)
 
-        print("⏳ Sleeping for 5 minutes...")
-        time.sleep(300)
+        print("⏳ Sleeping for 3 minutes...")
+        time.sleep(180)
 
-# === Start Everything ===
+# === Startup ===
 def start_bot():
     Thread(target=bot_loop).start()
 
