@@ -118,6 +118,7 @@ def check_ci_errors_and_comment(pr):
     # Parse logs
     job_logs = {}
     seen_jobs = set()
+    error_snippets = []
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
@@ -140,13 +141,19 @@ def check_ci_errors_and_comment(pr):
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     lower_line = line.lower()
+
                     if any(marker in lower_line for marker in [m.lower() for m in error_markers]):
-                        # Filter out useless setup/env lines
-                        if not re.search(r"(coverage:|##\[group\]|shell:|pull-request-change-detection|Cleaning up orphan processes)", lower_line):
-                            snippet = "\n".join(lines[max(0, i - 3): i + 7])
-                            job_logs.setdefault(matched_job, []).append(snippet)
-                            seen_jobs.add(matched_job)
-                            break
+                        # Skip known noisy marker lines (setup/env logs)
+                        if re.search(r"(coverage:|##\[group\]|shell:|Cleaning up orphan processes|core-github-repository-slug)", lower_line):
+                            continue
+
+                        snippet = "\n".join(lines[max(0, i - 3): i + 7])
+                        error_snippets.append(snippet)
+
+                # Only save the job if actual errors were found
+                if error_snippets:
+                    job_logs[matched_job] = error_snippets
+                    seen_jobs.add(matched_job)
 
     if not job_logs:
         print("❌ Some jobs failed, but no errors were found in logs.")
