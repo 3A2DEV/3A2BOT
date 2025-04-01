@@ -167,7 +167,6 @@ def check_ci_errors_and_comment(pr):
         print(f"✅ All jobs passed for PR #{pr.number}.")
         archive_old_comment(pr)
         # Remove failure-related labels and add success label
-        remove_label(pr, "failed_ci")
         remove_label(pr, "needs_revision")
         remove_label(pr, "stale_ci")
         add_label(pr, "success")
@@ -218,7 +217,8 @@ def check_ci_errors_and_comment(pr):
     
     # Update labels for failure: remove success label and add failure label
     remove_label(pr, "success")
-    add_label(pr, "failed_ci")
+    add_label(pr, "stale_ci")
+    add_label(pr, "needs_revision")
 
 def parse_component_name(body):
     """
@@ -264,7 +264,7 @@ def get_unprocessed_items():
     or have specific labels indicating further review.
     """
     issues = repo.get_issues(state="open", sort="created", direction="desc")
-    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision", "failed_ci"] for l in i.labels)]
+    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision"] for l in i.labels)]
 
 def bot_loop():
     """
