@@ -132,23 +132,30 @@ def check_ci_errors_and_comment(pr):
         remove_label(pr, "needs_revision")
         return
 
-    # Build the comment body
+    # === Build comment body ===
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job_name, snippet in errors_found:
         comment_body += f"### 🔧 {job_name}\n```text\n{snippet[:1000]}\n```\n\n"
 
-    # Archive existing bot comments
+    # === Check for previous bot comment ===
     existing_comments = list(pr.get_issue_comments())
     bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
-    for old_comment in bot_comments:
-        if "<details>" not in old_comment.body:
-            archived_body = f"""<details>
+    latest_comment = bot_comments[-1] if bot_comments else None
+
+    # Compare current vs previous comment content
+    if latest_comment and comment_body.strip() in latest_comment.body:
+        print("🔁 CI errors unchanged — skipping comment.")
+        return
+
+    # Archive old comment if present
+    if latest_comment and "<details>" not in latest_comment.body:
+        archived_body = f"""<details>
 <summary>🕙 Outdated CI result (auto-archived by bot)</summary>
 
-{old_comment.body}
+{latest_comment.body}
 </details>"""
-            old_comment.edit(archived_body)
-            print(f"📦 Archived old CI comment on PR #{pr.number}")
+        latest_comment.edit(archived_body)
+        print(f"📦 Archived old CI comment on PR #{pr.number}")
 
     # Post new comment
     pr.create_issue_comment(comment_body)
@@ -197,7 +204,7 @@ def bot_loop():
         print("⏳ Sleeping for 3 minutes...")
         time.sleep(180)
 
-# === Start Bot Thread ===
+# === Start Bot ===
 def start_bot():
     Thread(target=bot_loop).start()
 
