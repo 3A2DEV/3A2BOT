@@ -42,8 +42,10 @@ if os.path.exists(PROCESSED_FILE):
 error_markers = [
     "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
     "ImportError", "ModuleNotFoundError", "assert",
-    "ERROR! ", "fatal:", "task failed", "collection failure"
+    "ERROR! ", "fatal:", "task failed", "collection failure",
+    "Test failures:", "ansible-test sanity", "invalid-documentation-markup"
 ]
+
 
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
