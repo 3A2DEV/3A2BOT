@@ -123,44 +123,42 @@ def check_ci_errors_and_comment(pr):
     scanned_logs = 0
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
-        folders = {}
-
-        # Group files by job folder
+        seen_jobs = set()
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
-            folder = file_name.split("/")[0]
-            folders.setdefault(folder, []).append(file_name)
 
-        for folder, files in folders.items():
-            scanned_logs += 1
+            # Get job name from path
+            folder = file_name.split("/")[0]
             normalized = re.sub(r"^\d+_", "", folder.lower())
             normalized = re.sub(r"[^a-z0-9]", "_", normalized)
 
-            # Fuzzy match to job name
             job_name = None
             for key, name in job_lookup.items():
                 if key.startswith(normalized) or normalized in key:
                     job_name = name
                     break
             if not job_name:
-                job_name = re.sub(r"^\d+_", "", folder).replace("_", " ")
+                job_name = folder.replace("_", " ")
+
+            # Avoid duplicate job names
+            if job_name in seen_jobs:
+                continue
+            seen_jobs.add(job_name)
 
             print(f"🔍 Scanning job folder: {folder} → {job_name}")
+            with zip_file.open(file_name) as f:
+                content = f.read().decode("utf-8", errors="ignore")
+                lines = content.splitlines()
+                for i, line in enumerate(lines):
+                    if any(marker.lower() in line.lower() for marker in error_markers):
+                        print(f"❌ Error in job '{job_name}' from file '{file_name}'")
+                        start = max(0, i - 5)
+                        end = min(len(lines), i + 10)
+                        snippet = "\n".join(lines[start:end])
+                        job_logs.setdefault(job_name, []).append(snippet)
+                        break  # Stop after first detected error
 
-            for file_name in files:
-                with zip_file.open(file_name) as f:
-                    content = f.read().decode("utf-8", errors="ignore")
-                    lines = content.splitlines()
-                    for i, line in enumerate(lines):
-                        normalized_line = line.strip().lower()
-                        if any(marker.lower() in normalized_line for marker in error_markers):
-                            print(f"❌ Error in job '{job_name}' from file '{file_name}'")
-                            start = max(0, i - 5)
-                            end = min(len(lines), i + 10)
-                            snippet = "\n".join(lines[start:end])
-                            job_logs.setdefault(job_name, []).append(snippet)
-                            break
 
     errors_by_job = {k: v for k, v in job_logs.items() if v}
 
@@ -190,7 +188,7 @@ def check_ci_errors_and_comment(pr):
 
     # === Build comment body ===
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
-    for job_name, snippets in errors_by_job.items():
+    for job_name, snippets in job_logs.items():
         comment_body += f"### 🔧 {job_name}\n"
         for snippet in snippets:
             comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
