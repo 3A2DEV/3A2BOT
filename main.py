@@ -202,8 +202,6 @@ def check_ci_errors_and_comment(pr):
     
     # Update labels for failure: remove success label and add failure indicators
     remove_label(pr, "success")
-    remove_label(pr, "stale_ci")
-    remove_label(pr, "needs_revision")
     # Add the failure labels you use
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
