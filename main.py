@@ -37,51 +37,33 @@ if os.path.exists(PROCESSED_FILE):
     except Exception as e:
         print(f"⚠️ Failed to load {PROCESSED_FILE}: {e}")
 
-# Error markers for identifying failures in logs
-error_markers = [
-    "failed", "error", "traceback", "syntaxerror",
-    "importerror", "modulenotfounderror", "assert",
-    "error! ", "fatal:", "task failed", "collection failure",
-    "test failures:", "ansible-test sanity", "invalid-documentation-markup",
-    "non-existing option", "sanity failure", "test failed", "invalid value"
-]
-
-# Patterns to skip irrelevant lines
-skip_patterns = re.compile(
-    r"coverage:|##\[group\]|shell:|Cleaning up orphan processes|core-github-repository-slug|pull-request-change-detection",
-    re.IGNORECASE
-)
-
 def clean_line(line):
     """
-    Remove a leading ISO timestamp and ANSI escape codes from a log line.
+    Remove a leading ISO timestamp and ANSI escape sequences (including replacement characters)
+    from a log line.
     Example timestamp: 2025-04-01T04:07:58.9862086Z
     """
     # Remove ISO timestamp at the beginning of the line, if present.
     cleaned = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*", "", line)
-    # Remove ANSI escape sequences (color codes)
-    cleaned = re.sub(r"\x1b\[[0-9;]*m", "", cleaned)
+    # Remove ANSI escape sequences and replacement characters (�)
+    cleaned = re.sub(r"(?:\x1b|�)\[[0-9;]*[mK]", "", cleaned)
     return cleaned.strip()
 
-def extract_error_snippet(lines):
+def extract_error_snippets(lines):
     """
-    Extracts a snippet from the log around lines that start with error keywords.
-    The function first cleans each line to remove timestamps and color codes.
+    Extracts all error snippets from the log file lines that match error patterns.
+    The function first cleans each line to remove timestamps and escape codes.
     It then checks if the cleaned line starts with "FAILED", "FATAL", or "ERROR:".
+    For each match, it captures a snippet of 3 lines before and 7 lines after the error line.
+    Returns a list of snippets.
     """
     candidates = []
     for i, line in enumerate(lines):
         cleaned = clean_line(line)
-        # Check if the cleaned line starts with any error keyword.
-        if re.match(r'^(FAILED:|FATAL:|ERROR:)', cleaned):
-            # Capture a snippet: 3 lines before and 7 lines after the error line.
-            snippet = "\n".join(lines[max(0, i-3):min(len(lines), i+7)])
-            candidates.append((i, snippet))
-    
-    if candidates:
-        # Optionally, choose the snippet from the last occurrence.
-        return candidates[-1][1]
-    return None
+        if re.match(r'^(FAILED|FATAL|ERROR:)', cleaned):
+            snippet = "\n".join(lines[max(0, i-1):min(len(lines), i+3)])
+            candidates.append(snippet)
+    return candidates
 
 def archive_old_comment(pr):
     """
@@ -131,7 +113,7 @@ def match_job_for_log(normalized_folder, job_lookup):
 def check_ci_errors_and_comment(pr):
     """
     Check CI workflow logs for the given pull request, extract error snippets for failed jobs,
-    update labels based on test results, and update or post a comment on the PR with the relevant error details.
+    update labels based on test results, and update or post a comment on the PR with the error details.
     """
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
@@ -172,8 +154,9 @@ def check_ci_errors_and_comment(pr):
         print(f"✅ All jobs passed for PR #{pr.number}.")
         archive_old_comment(pr)
         # Remove failure-related labels and add success label
-        remove_label(pr, "needs_revision")
         remove_label(pr, "stale_ci")
+        remove_label(pr, "needs_revision")
+        remove_label(pr, "failed_ci")
         add_label(pr, "success")
         return
 
@@ -190,9 +173,6 @@ def check_ci_errors_and_comment(pr):
             normalized_folder = re.sub(r"^\d+_", "", folder).replace(".txt", "").strip().lower()
             normalized_folder = re.sub(r"[^a-z0-9]", "_", normalized_folder)
             
-            # Debug: print the normalized folder and job keys
-            # print(f"Debug: normalized_folder='{normalized_folder}', job keys: {list(job_lookup.keys())}")
-
             matched_job = match_job_for_log(normalized_folder, job_lookup)
             if not matched_job or matched_job in job_logs:
                 continue
@@ -204,9 +184,11 @@ def check_ci_errors_and_comment(pr):
                     print(f"⚠️ Error reading {file_name}: {ex}")
                     continue
                 lines = content.splitlines()
-                snippet = extract_error_snippet(lines)
-                if snippet:
-                    job_logs[matched_job] = snippet
+                snippets = extract_error_snippets(lines)
+                if snippets:
+                    # Combine all snippets for this job with a separator.
+                    combined_snippets = "\n\n---\n\n".join(snippets)
+                    job_logs[matched_job] = combined_snippets
 
     if not job_logs:
         print("❌ Some jobs failed, but no valid error snippets found.")
@@ -214,14 +196,17 @@ def check_ci_errors_and_comment(pr):
 
     # Build the PR comment body with error details for each failed job
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
-    for job, snippet in job_logs.items():
+    for job, combined_snippet in job_logs.items():
         comment_body += f"### ⚙️ {job}\n"
-        comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
+        comment_body += f"```text\n{combined_snippet[:1000]}\n```\n\n"
 
     post_or_update_comment(pr, comment_body)
     
-    # Update labels for failure: remove success label and add failure label
+    # Update labels for failure: remove success label and add failure indicators
     remove_label(pr, "success")
+    remove_label(pr, "stale_ci")
+    remove_label(pr, "needs_revision")
+    # Add the failure labels you use
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
 
@@ -269,7 +254,7 @@ def get_unprocessed_items():
     or have specific labels indicating further review.
     """
     issues = repo.get_issues(state="open", sort="created", direction="desc")
-    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision"] for l in i.labels)]
+    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision", "failed_ci"] for l in i.labels)]
 
 def bot_loop():
     """
