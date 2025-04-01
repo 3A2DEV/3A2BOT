@@ -58,11 +58,10 @@ def extract_error_snippets(lines):
     Returns a list of snippets.
     """
     candidates = []
-    for i, line in enumerate(lines):
+    for line in lines:
         cleaned = clean_line(line)
-        if re.match(r'^(FAILED|FATAL|ERROR:)', cleaned):
-            snippet = "\n".join(lines[max(0, i-1):min(len(lines), i+2)])
-            candidates.append(snippet)
+        if re.match(r'^(FAILED|FATAL|ERROR)', cleaned):
+            candidates.append(cleaned)
     return candidates
 
 def archive_old_comment(pr):
@@ -156,7 +155,6 @@ def check_ci_errors_and_comment(pr):
         # Remove failure-related labels and add success label
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
-        remove_label(pr, "failed_ci")
         add_label(pr, "success")
         return
 
