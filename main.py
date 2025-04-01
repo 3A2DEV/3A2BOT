@@ -11,10 +11,9 @@ app = Flask(__name__)
 def home():
     return jsonify({
         "schemaVersion": 1,
-        "status": "alive",
-        "message": "3A2BOT is alive!",
-        "color": "green",
-        "version": "1.0.0"
+        "label": "3A2BOT",
+        "message": "alive",
+        "color": "green"
     }), 200
 
 if __name__ == "__main__":
