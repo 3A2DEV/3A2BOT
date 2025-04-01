@@ -52,20 +52,34 @@ skip_patterns = re.compile(
     re.IGNORECASE
 )
 
+def clean_line(line):
+    """
+    Remove a leading ISO timestamp and ANSI escape codes from a log line.
+    Example timestamp: 2025-04-01T04:07:58.9862086Z
+    """
+    # Remove ISO timestamp at the beginning of the line, if present.
+    cleaned = re.sub(r"^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*", "", line)
+    # Remove ANSI escape sequences (color codes)
+    cleaned = re.sub(r"\x1b\[[0-9;]*m", "", cleaned)
+    return cleaned.strip()
+
 def extract_error_snippet(lines):
     """
-    Extracts a snippet from the log around lines that start with "FAILED" or "FATAL".
-    This approach focuses on generic error patterns.
+    Extracts a snippet from the log around lines that start with error keywords.
+    The function first cleans each line to remove timestamps and color codes.
+    It then checks if the cleaned line starts with "FAILED", "FATAL", or "ERROR:".
     """
     candidates = []
     for i, line in enumerate(lines):
-        if re.match(r'^(FAILED|FATAL)', line.strip()):
-            # Capture a snippet: 3 lines before and 7 lines after the error line
+        cleaned = clean_line(line)
+        # Check if the cleaned line starts with any error keyword.
+        if re.match(r'^(FAILED:|FATAL:|ERROR:)', cleaned):
+            # Capture a snippet: 3 lines before and 7 lines after the error line.
             snippet = "\n".join(lines[max(0, i-3):min(len(lines), i+7)])
             candidates.append((i, snippet))
     
     if candidates:
-        # Optionally, choose the last candidate if multiple errors occur
+        # Optionally, choose the snippet from the last occurrence.
         return candidates[-1][1]
     return None
 
