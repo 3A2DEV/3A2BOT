@@ -19,15 +19,15 @@ app = Flask(__name__)
 def home():
     return "3A2DEV Bot is alive!", 200
 
+# === Config ===
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
 
-# Setup GitHub client
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# Load processed items
+# Load previously processed PRs
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
@@ -38,15 +38,16 @@ if os.path.exists(PROCESSED_FILE):
     except Exception as e:
         print(f"⚠️ Failed to load processed.json: {e}")
 
-# Error markers for detecting CI issues
+# === Error Patterns ===
 error_markers = [
     "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
     "ImportError", "ModuleNotFoundError", "assert",
     "ERROR! ", "fatal:", "task failed", "collection failure",
-    "Test failures:", "ansible-test sanity", "invalid-documentation-markup"
+    "Test failures:", "ansible-test sanity", "invalid-documentation-markup",
+    "The test 'ansible-test sanity", "sanity failure", "test failed"
 ]
 
-
+# === Bot Logic ===
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
     return match.group(1) if match else None
@@ -64,7 +65,7 @@ def comment_with_link(issue, path):
 
 - [**{path}**]({url})"""
     issue.create_comment(body)
-    print(f"✅ Commented on #{issue.number}")
+    print(f"✅ Commented on #{issue.number} with module path")
 
 def add_label(item, label):
     labels = [l.name for l in item.labels]
@@ -88,16 +89,16 @@ def check_ci_errors_and_comment(pr):
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
     if runs.totalCount == 0:
-        print("❌ No CI workflow runs found for this PR.")
+        print("❌ No CI runs found.")
         return
 
     latest_run = runs[0]
-
     if latest_run.status != "completed":
-        print("🕒 CI is still running...")
+        print("⏳ CI is still running...")
         return
 
     logs_url = latest_run.logs_url
+    print(f"📦 Downloading logs from: {logs_url}")
     headers = {"Authorization": f"token {GITHUB_TOKEN}"}
     r = requests.get(logs_url, headers=headers)
     if r.status_code != 200:
@@ -110,30 +111,32 @@ def check_ci_errors_and_comment(pr):
             if not file_name.endswith(".txt"):
                 continue
             with zip_file.open(file_name) as f:
-                content = f.read().decode("utf-8", errors="ignore")
-                if any(marker in content for marker in error_markers):
-                    snippet = "\n".join(content.splitlines()[:50])
-                    errors_found.append((file_name, snippet))
+                content = f.read().decode("utf-8", errors="ignore").lower()
+                for marker in error_markers:
+                    if marker.lower() in content:
+                        print(f"❌ Found '{marker}' in {file_name}")
+                        snippet = "\n".join(content.splitlines()[:50])
+                        errors_found.append((file_name, snippet))
+                        break
 
     if not errors_found:
-        print(f"✅ No CI errors found in logs for PR #{pr.number}. Adding 'success' label.")
+        print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
         return
 
+    # Compose error comment
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for file_name, snippet in errors_found:
         comment_body += f"**{file_name}**\n```text\n{snippet[:1000]}\n```\n\n"
 
     existing_comments = pr.get_issue_comments()
-    for comment in existing_comments:
-        if "CI Test Failures Detected" in comment.body:
-            print("💬 Skipping duplicate CI comment.")
-            break
-    else:
+    if not any("CI Test Failures Detected" in c.body for c in existing_comments):
         pr.create_issue_comment(comment_body)
-        print(f"✅ Posted CI error summary on PR #{pr.number}")
+        print(f"💬 Posted CI failure comment on PR #{pr.number}")
+    else:
+        print("💬 CI error comment already exists.")
 
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
@@ -150,7 +153,6 @@ def get_unprocessed_items():
         ):
             items.append(i)
     return items
-
 
 def bot_loop():
     global processed
@@ -177,6 +179,7 @@ def bot_loop():
         print("⏳ Sleeping for 5 minutes...")
         time.sleep(300)
 
+# === Start Everything ===
 def start_bot():
     Thread(target=bot_loop).start()
 
