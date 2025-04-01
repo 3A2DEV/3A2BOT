@@ -40,9 +40,9 @@ if os.path.exists(PROCESSED_FILE):
 
 # Error markers for detecting CI issues
 error_markers = [
-    "FAILED", "failed", "ERROR", "Traceback (most recent call last):",
-    "ModuleNotFoundError", "ImportError", "SyntaxError", "E   ", "assert",
-    "ERROR! ", "fatal:", "task failed", "collection failure", "unexpected failure"
+    "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
+    "ImportError", "ModuleNotFoundError", "assert",
+    "ERROR! ", "fatal:", "task failed", "collection failure"
 ]
 
 def parse_component_name(body):
@@ -93,13 +93,6 @@ def check_ci_errors_and_comment(pr):
 
     if latest_run.status != "completed":
         print("🕒 CI is still running...")
-        return
-
-    if latest_run.conclusion == "success":
-        print(f"✅ CI passed for PR #{pr.number}. Adding 'success' label.")
-        add_label(pr, "success")
-        remove_label(pr, "stale_ci")
-        remove_label(pr, "needs_revision")
         return
 
     logs_url = latest_run.logs_url
