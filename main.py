@@ -126,7 +126,7 @@ def match_job_for_log(normalized_folder, job_lookup):
 def check_ci_errors_and_comment(pr):
     """
     Check CI workflow logs for the given pull request, extract error snippets for failed jobs,
-    and update or post a comment on the PR with the relevant error details.
+    update labels based on test results, and update or post a comment on the PR with the relevant error details.
     """
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
@@ -162,12 +162,18 @@ def check_ci_errors_and_comment(pr):
         print("⚠️ Failed to fetch job list")
         return
 
+    # Update labels based on the overall test result
     if not failed_jobs:
         print(f"✅ All jobs passed for PR #{pr.number}.")
         archive_old_comment(pr)
+        # Remove failure-related labels and add success label
+        remove_label(pr, "failed_ci")
+        remove_label(pr, "needs_revision")
+        remove_label(pr, "stale_ci")
+        add_label(pr, "success")
         return
 
-    # Extract error snippets from logs
+    # There are failed jobs; proceed to extract error snippets
     job_logs = {}
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
@@ -209,6 +215,10 @@ def check_ci_errors_and_comment(pr):
         comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
 
     post_or_update_comment(pr, comment_body)
+    
+    # Update labels for failure: remove success label and add failure label
+    remove_label(pr, "success")
+    add_label(pr, "failed_ci")
 
 def parse_component_name(body):
     """
@@ -241,10 +251,12 @@ def comment_with_link(issue, path):
 def add_label(item, label):
     if label not in [l.name for l in item.labels]:
         item.add_to_labels(label)
+        print(f"🏷️ Added label '{label}' to #{item.number}")
 
 def remove_label(item, label):
     if label in [l.name for l in item.labels]:
         item.remove_from_labels(label)
+        print(f"🏷️ Removed label '{label}' from #{item.number}")
 
 def get_unprocessed_items():
     """
@@ -252,12 +264,12 @@ def get_unprocessed_items():
     or have specific labels indicating further review.
     """
     issues = repo.get_issues(state="open", sort="created", direction="desc")
-    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision"] for l in i.labels)]
+    return [i for i in issues if i.number not in processed or any(l.name in ["success", "stale_ci", "needs_revision", "failed_ci"] for l in i.labels)]
 
 def bot_loop():
     """
     Main bot loop: processes unprocessed issues/PRs, checks CI errors,
-    and updates comments accordingly.
+    updates labels, and updates comments accordingly.
     """
     global processed
     print("🤖 Bot loop started...")
