@@ -122,9 +122,8 @@ def check_ci_errors_and_comment(pr):
 
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job, snippet in job_logs.items():
-        comment_body += f"### ⚙️ {job}\n```
-{snippet[:1000]}
-```\n\n"
+        comment_body += f"### ⚙️ {job}\n"
+        comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
 
     pr.create_issue_comment(comment_body)
     print("💬 Posted CI error comment")
