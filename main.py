@@ -23,17 +23,20 @@ GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
 
+# GitHub repo
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
+# Load processed issues
 processed = set()
 if os.path.exists(PROCESSED_FILE):
-    with open(PROCESSED_FILE) as f:
-        try:
+    try:
+        with open(PROCESSED_FILE) as f:
             processed = set(json.load(f))
-        except Exception as e:
-            print(f"⚠️ Failed to load processed.json: {e}")
+    except Exception as e:
+        print(f"⚠️ Failed to load processed.json: {e}")
 
+# Error markers
 error_markers = [
     "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
     "ImportError", "ModuleNotFoundError", "assert",
@@ -44,17 +47,46 @@ error_markers = [
 ]
 
 skip_patterns = re.compile(
-    r"coverage:|##\[group\]|shell:|Cleaning up orphan processes|core-github-repository-slug|pull-request-change-detection",
+    r"coverage:|##\\[group\\]|shell:|Cleaning up orphan processes|core-github-repository-slug|pull-request-change-detection",
     re.IGNORECASE
 )
 
 def extract_first_real_error(lines):
     for i, line in enumerate(lines):
         lower = line.lower()
-        if any(marker in lower for marker in [m.lower() for m in error_markers]):
+        if any(marker in lower for marker in error_markers):
             if not skip_patterns.search(lower):
                 return "\n".join(lines[max(0, i-3):i+7])
     return None
+
+def archive_old_comment(pr):
+    comments = list(pr.get_issue_comments())
+    bot_comments = [c for c in comments if "CI Test Failures Detected" in c.body]
+    if bot_comments:
+        latest = bot_comments[-1]
+        if "<details>" not in latest.body:
+            archived = f"""<details>
+<summary>🕙 Outdated CI result (auto-archived by bot)</summary>
+
+{latest.body}
+</details>"""
+            latest.edit(archived)
+            print("📦 Archived old CI comment")
+
+def post_or_update_comment(pr, new_body):
+    existing = list(pr.get_issue_comments())
+    bot_comments = [c for c in existing if "CI Test Failures Detected" in c.body]
+    if bot_comments:
+        last = bot_comments[-1]
+        if new_body.strip() != last.body.strip():
+            archive_old_comment(pr)
+            pr.create_issue_comment(new_body)
+            print("💬 Posted updated CI failures")
+        else:
+            print("🔁 Same error content. Skipping comment.")
+    else:
+        pr.create_issue_comment(new_body)
+        print("💬 Posted first CI failure comment")
 
 def check_ci_errors_and_comment(pr):
     print(f"🔎 Checking CI logs for PR #{pr.number}...")
@@ -92,6 +124,7 @@ def check_ci_errors_and_comment(pr):
 
     if not failed_jobs:
         print(f"✅ All jobs passed for PR #{pr.number}.")
+        archive_old_comment(pr)
         return
 
     job_logs = {}
@@ -125,8 +158,7 @@ def check_ci_errors_and_comment(pr):
         comment_body += f"### ⚙️ {job}\n"
         comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
 
-    pr.create_issue_comment(comment_body)
-    print("💬 Posted CI error comment")
+    post_or_update_comment(pr, comment_body)
 
 def parse_component_name(body):
     match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
