@@ -120,17 +120,18 @@ def check_ci_errors_and_comment(pr):
 
     # === Scan log files ===
     job_logs = {}
+    scanned_logs = 0
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
 
+            scanned_logs += 1
             folder = file_name.split("/")[0]
             normalized = re.sub(r"^\d+_", "", folder.lower())
             normalized = re.sub(r"[^a-z0-9]", "_", normalized)
 
-            # Try fuzzy match to job name
             job_name = None
             for key, name in job_lookup.items():
                 if key.startswith(normalized) or normalized in key:
@@ -139,12 +140,15 @@ def check_ci_errors_and_comment(pr):
             if not job_name:
                 job_name = folder.replace("_", " ")
 
+            print(f"🔍 Scanning log: {file_name} for job: {job_name}")
+
             with zip_file.open(file_name) as f:
-                content = f.read().decode("utf-8", errors="ignore").lower()
+                content = f.read().decode("utf-8", errors="ignore")
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
-                    if any(marker in line for marker in error_markers):
-                        print(f"❌ Match in job '{job_name}' file '{file_name}': {line.strip()}")
+                    normalized_line = line.strip().lower()
+                    if any(marker.lower() in normalized_line for marker in error_markers):
+                        print(f"❌ Error in '{job_name}' at line: {line.strip()}")
                         start = max(0, i - 5)
                         end = min(len(lines), i + 10)
                         snippet = "\n".join(lines[start:end])
@@ -152,11 +156,15 @@ def check_ci_errors_and_comment(pr):
                         break
 
     errors_by_job = {k: v for k, v in job_logs.items() if v}
-    if not errors_by_job:
+    if scanned_logs > 0 and not errors_by_job:
         print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
+        return
+
+    if not errors_by_job:
+        print("⚠️ No logs were scanned, skipping.")
         return
 
     # === Build comment body ===
