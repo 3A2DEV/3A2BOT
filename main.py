@@ -10,8 +10,10 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return jsonify({
+        "schemaVersion": 1,
         "status": "alive",
         "message": "3A2BOT is alive!",
+        "color": "green",
         "version": "1.0.0"
     }), 200
 
