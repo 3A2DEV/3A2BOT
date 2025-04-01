@@ -117,6 +117,8 @@ def check_ci_errors_and_comment(pr):
 
     # Parse logs
     job_logs = {}
+    seen_jobs = set()
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
@@ -127,11 +129,11 @@ def check_ci_errors_and_comment(pr):
             normalized = re.sub(r"[^a-z0-9]", "_", base_name.lower())
 
             matched_job = next((job_lookup[k] for k in job_lookup if normalized in k), None)
-            if not matched_job:
+            if not matched_job or matched_job not in failed_jobs:
                 continue
 
-            if matched_job not in failed_jobs:
-                continue
+            if matched_job in seen_jobs:
+                continue  # ✅ Already logged one error for this job
 
             with zip_file.open(file_name) as f:
                 content = f.read().decode("utf-8", errors="ignore")
@@ -140,6 +142,7 @@ def check_ci_errors_and_comment(pr):
                     if any(m in line.lower() for m in [m.lower() for m in error_markers]):
                         snippet = "\n".join(lines[max(0, i-5):i+10])
                         job_logs.setdefault(matched_job, []).append(snippet)
+                        seen_jobs.add(matched_job)  # ✅ Mark job as processed
                         break
 
     if not job_logs:
@@ -149,7 +152,7 @@ def check_ci_errors_and_comment(pr):
     # Build comment
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job, snippets in job_logs.items():
-        comment_body += f"### 🔧 {job}\n"
+        comment_body += f"### ⚙️ {job}\n"
         for s in snippets:
             comment_body += f"```text\n{s[:1000]}\n```\n\n"
 
