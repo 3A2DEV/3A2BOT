@@ -117,7 +117,8 @@ def check_ci_errors_and_comment(pr):
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     if any(marker.lower() in line for marker in error_markers):
-                        job_name = file_name.split("/")[0].replace("_", " ")
+                        raw_job_name = file_name.split("/")[0]
+                        job_name = re.sub(r"^\d+_", "", raw_job_name).replace("_", " ")
                         print(f"❌ Error match in job '{job_name}': {line.strip()}")
                         start = max(0, i - 5)
                         end = min(len(lines), i + 10)
