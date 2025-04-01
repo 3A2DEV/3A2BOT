@@ -139,11 +139,14 @@ def check_ci_errors_and_comment(pr):
                 content = f.read().decode("utf-8", errors="ignore")
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
-                    if any(m in line.lower() for m in [m.lower() for m in error_markers]):
-                        snippet = "\n".join(lines[max(0, i-5):i+10])
-                        job_logs.setdefault(matched_job, []).append(snippet)
-                        seen_jobs.add(matched_job)  # ✅ Mark job as processed
-                        break
+                    lower_line = line.lower()
+                    if any(marker in lower_line for marker in [m.lower() for m in error_markers]):
+                        # Filter out useless setup/env lines
+                        if not re.search(r"(coverage:|##\[group\]|shell:|pull-request-change-detection|Cleaning up orphan processes)", lower_line):
+                            snippet = "\n".join(lines[max(0, i - 3): i + 7])
+                            job_logs.setdefault(matched_job, []).append(snippet)
+                            seen_jobs.add(matched_job)
+                            break
 
     if not job_logs:
         print("❌ Some jobs failed, but no errors were found in logs.")
