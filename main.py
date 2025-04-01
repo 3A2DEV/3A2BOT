@@ -69,16 +69,6 @@ def extract_error_snippet(lines):
         return candidates[-1][1]
     return None
 
-    # Prioritize snippets that include highly specific error markers
-    prioritized_markers = ["invalid-documentation-markup", "non-existing option"]
-    for _, snippet in candidates:
-        snippet_lower = snippet.lower()
-        if any(pm in snippet_lower for pm in prioritized_markers):
-            return snippet
-
-    # Fallback: return the snippet that appears latest in the log
-    return candidates[-1][1]
-
 def archive_old_comment(pr):
     """
     Archive the old bot comment by wrapping it in a collapsible <details> tag.
