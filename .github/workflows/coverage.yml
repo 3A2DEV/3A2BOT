@@ -39,7 +39,7 @@ jobs:
 
       # Upload coverage report to Codecov
       - name: Upload coverage reports to Codecov
-          uses: codecov/codecov-action@v5
-          with:
-            token: ${{ secrets.CODECOV_TOKEN }}
-            slug: 3A2DEV/3A2BOT
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: 3A2DEV/3A2BOT
