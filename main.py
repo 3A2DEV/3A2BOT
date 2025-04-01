@@ -109,7 +109,8 @@ def check_ci_errors_and_comment(pr):
 
     # Map zip folders to real job names
     job_lookup = {}
-    for job in latest_run.get_jobs():
+    jobs = repo.get_workflow_run(latest_run.id).get_jobs()
+    for job in jobs:
         key = re.sub(r"[^a-z0-9]", "_", job.name.lower())
         job_lookup[key] = job.name
 
