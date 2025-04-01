@@ -1,5 +1,5 @@
 # Copyright (c) 2025, Marco Noce <nce.marco@gmail.com>
-# GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
+# GNU General Public License v3.0+
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
@@ -119,7 +119,7 @@ def check_ci_errors_and_comment(pr):
         print("⚠️ Failed to get job names from GitHub API")
 
     # === Scan log files ===
-    errors_by_job = {}
+    job_logs = {}
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
@@ -130,35 +130,28 @@ def check_ci_errors_and_comment(pr):
             normalized = re.sub(r"^\d+_", "", folder.lower())
             normalized = re.sub(r"[^a-z0-9]", "_", normalized)
 
-            job_name = job_lookup.get(normalized, folder.replace("_", " "))
+            # Try fuzzy match to job name
+            job_name = None
+            for key, name in job_lookup.items():
+                if key.startswith(normalized) or normalized in key:
+                    job_name = name
+                    break
+            if not job_name:
+                job_name = folder.replace("_", " ")
 
-            with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
-                job_logs = {}
+            with zip_file.open(file_name) as f:
+                content = f.read().decode("utf-8", errors="ignore").lower()
+                lines = content.splitlines()
+                for i, line in enumerate(lines):
+                    if any(marker in line for marker in error_markers):
+                        print(f"❌ Match in job '{job_name}' file '{file_name}': {line.strip()}")
+                        start = max(0, i - 5)
+                        end = min(len(lines), i + 10)
+                        snippet = "\n".join(lines[start:end])
+                        job_logs.setdefault(job_name, []).append(snippet)
+                        break
 
-                for file_name in zip_file.namelist():
-                    if not file_name.endswith(".txt"):
-                        continue
-
-                    folder = file_name.split("/")[0]
-                    normalized = re.sub(r"^\d+_", "", folder.lower())
-                    normalized = re.sub(r"[^a-z0-9]", "_", normalized)
-                    job_name = job_lookup.get(normalized, folder.replace("_", " "))
-
-                    with zip_file.open(file_name) as f:
-                        content = f.read().decode("utf-8", errors="ignore").lower()
-                        lines = content.splitlines()
-                        for i, line in enumerate(lines):
-                            if any(marker.lower() in line for marker in error_markers):
-                                print(f"❌ Match in job '{job_name}' file '{file_name}': {line.strip()}")
-                                start = max(0, i - 5)
-                                end = min(len(lines), i + 10)
-                                snippet = "\n".join(lines[start:end])
-                                job_logs.setdefault(job_name, []).append(snippet)
-                                break  # only skip current .txt, not whole job
-
-                errors_by_job = {k: v for k, v in job_logs.items() if v}
-
-
+    errors_by_job = {k: v for k, v in job_logs.items() if v}
     if not errors_by_job:
         print(f"✅ No CI errors for PR #{pr.number}.")
         add_label(pr, "success")
