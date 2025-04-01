@@ -19,7 +19,7 @@ app = Flask(__name__)
 def home():
     return "3A2DEV Bot is alive!", 200
 
-# === Config ===
+# === Configuration ===
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 REPO_NAME = "3A2DEV/a2dev.general"
 PROCESSED_FILE = "processed.json"
@@ -27,237 +27,165 @@ PROCESSED_FILE = "processed.json"
 g = Github(GITHUB_TOKEN)
 repo = g.get_repo(REPO_NAME)
 
-# === Load processed PRs ===
 processed = set()
 if os.path.exists(PROCESSED_FILE):
     try:
         with open(PROCESSED_FILE) as f:
-            data = f.read().strip()
-            if data:
-                processed = set(json.loads(data))
+            processed = set(json.load(f))
     except Exception as e:
-        print(f"⚠️ Failed to load processed.json: {e}")
+        print(f"⚠️ Failed to load {PROCESSED_FILE}: {e}")
 
-# === Error Markers ===
 error_markers = [
-    "FAILED", "failed", "ERROR", "Traceback", "SyntaxError",
-    "ImportError", "ModuleNotFoundError", "assert",
-    "ERROR! ", "fatal:", "task failed", "collection failure",
-    "Test failures:", "ansible-test sanity", "invalid-documentation-markup",
-    "non-existing option", "The test 'ansible-test sanity", "sanity failure",
-    "test failed", "invalid value"
+    "FAILED", "ERROR", "Traceback", "SyntaxError", "assert", "ImportError",
+    "ModuleNotFoundError", "task failed", "Test failures:", "fatal:", "invalid value",
+    "sanity failure", "invalid-documentation-markup", "non-existing option",
 ]
 
-# === Utilities ===
-def parse_component_name(body):
-    match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", body)
-    return match.group(1) if match else None
+# === Helpers ===
+def add_label(pr, label):
+    if label not in [l.name for l in pr.labels]:
+        pr.add_to_labels(label)
 
-def file_exists(path):
-    try:
-        repo.get_contents(path)
-        return True
-    except:
-        return False
+def remove_label(pr, label):
+    if label in [l.name for l in pr.labels]:
+        pr.remove_from_labels(label)
 
-def comment_with_link(issue, path):
-    url = f"https://github.com/{REPO_NAME}/blob/main/{path}"
-    body = f"""Files identified in the description:
+def archive_old_ci_comment(pr):
+    comments = list(pr.get_issue_comments())
+    for comment in reversed(comments):
+        if "CI Test Failures Detected" in comment.body and "<details>" not in comment.body:
+            comment.edit(f"<details>\n<summary>🕙 Outdated CI result</summary>\n\n{comment.body}\n</details>")
+            break
 
-- [**{path}**]({url})"""
-    issue.create_comment(body)
-    print(f"✅ Commented on #{issue.number} with module path")
-
-def add_label(item, label):
-    labels = [l.name for l in item.labels]
-    if label not in labels:
-        try:
-            item.add_to_labels(label)
-            print(f"🏷️ Added label '{label}' to #{item.number}")
-        except Exception as e:
-            print(f"❌ Failed to add label '{label}' to #{item.number}: {e}")
-
-def remove_label(item, label):
-    labels = [l.name for l in item.labels]
-    if label in labels:
-        try:
-            item.remove_from_labels(label)
-            print(f"❌ Removed label '{label}' from #{item.number}")
-        except Exception as e:
-            print(f"⚠️ Failed to remove label '{label}' from #{item.number}: {e}")
-
-# === CI Analysis ===
-def check_ci_errors_and_comment(pr):
-    print(f"🔎 Checking CI logs for PR #{pr.number}...")
+def get_latest_workflow_run(pr):
     runs = repo.get_workflow_runs(event="pull_request", head_sha=pr.head.sha)
-    if runs.totalCount == 0:
-        print("❌ No CI runs found.")
-        return
+    return runs[0] if runs.totalCount > 0 else None
 
-    latest_run = runs[0]
-    if latest_run.status != "completed":
-        print("⏳ CI is still running...")
-        return
+def normalize_key(name):
+    return re.sub(r"[^a-z0-9]", "_", name.lower())
 
-    logs_url = latest_run.logs_url
-    print(f"📦 Downloading logs from: {logs_url}")
-    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
-    r = requests.get(logs_url, headers=headers)
-    if r.status_code != 200:
-        print("⚠️ Failed to download logs")
-        return
+def extract_errors_from_logs(zip_content, job_lookup):
+    job_errors = {}
+    seen = set()
 
-    # === Get real job names via GitHub REST API ===
-    job_lookup = {}
-    jobs_url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs/{latest_run.id}/jobs"
-    jr = requests.get(jobs_url, headers=headers)
-    if jr.status_code == 200:
-        for job in jr.json().get("jobs", []):
-            key = re.sub(r"[^a-z0-9]", "_", job["name"].lower())
-            job_lookup[key] = job["name"]
-    else:
-        print("⚠️ Failed to get job names from GitHub API")
-
-    # === Scan log files grouped by job folder ===
-    job_logs = {}
-    scanned_logs = 0
-
-    with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
-        seen_jobs = set()
+    with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_file:
         for file_name in zip_file.namelist():
             if not file_name.endswith(".txt"):
                 continue
 
-            # Get job name from path
-            folder = file_name.split("/")[0]
-            normalized = re.sub(r"^\d+_", "", folder.lower())
-            normalized = re.sub(r"[^a-z0-9]", "_", normalized)
+            base = file_name.split("/")[0]
+            name_clean = re.sub(r"^\d+_", "", base)
+            normalized = normalize_key(name_clean)
 
-            job_name = None
-            for key, name in job_lookup.items():
-                if key.startswith(normalized) or normalized in key:
-                    job_name = name
-                    break
-            if not job_name:
-                job_name = folder.replace("_", " ")
-
-            # Avoid duplicate job names
-            if job_name in seen_jobs:
+            job_name = next((v for k, v in job_lookup.items() if normalized in k), name_clean)
+            if job_name in seen:
                 continue
-            seen_jobs.add(job_name)
+            seen.add(job_name)
 
-            print(f"🔍 Scanning job folder: {folder} → {job_name}")
             with zip_file.open(file_name) as f:
-                content = f.read().decode("utf-8", errors="ignore")
+                content = f.read().decode(errors="ignore")
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
-                    if any(marker.lower() in line.lower() for marker in error_markers):
-                        print(f"❌ Error in job '{job_name}' from file '{file_name}'")
-                        start = max(0, i - 5)
-                        end = min(len(lines), i + 10)
-                        snippet = "\n".join(lines[start:end])
-                        job_logs.setdefault(job_name, []).append(snippet)
-                        break  # Stop after first detected error
+                    if any(m.lower() in line.lower() for m in error_markers):
+                        snippet = "\n".join(lines[max(0, i-5):min(len(lines), i+10)])
+                        job_errors[job_name] = snippet[:1000]
+                        break
 
+    return job_errors
 
-    errors_by_job = {k: v for k, v in job_logs.items() if v}
-
-    if scanned_logs == 0:
-        print("⚠️ No logs were scanned at all.")
+def check_ci_errors_and_comment(pr):
+    print(f"🔎 Analyzing CI logs for PR #{pr.number}")
+    run = get_latest_workflow_run(pr)
+    if not run or run.status != "completed":
+        print("⏳ No completed workflow run found.")
         return
 
-    if not errors_by_job:
-        print(f"✅ No CI errors found for PR #{pr.number}.")
-        existing_comments = list(pr.get_issue_comments())
-        bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
-        latest_comment = bot_comments[-1] if bot_comments else None
+    # Fetch logs
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
+    log_resp = requests.get(run.logs_url, headers=headers)
+    if log_resp.status_code != 200:
+        print("❌ Failed to fetch logs.")
+        return
 
-        if latest_comment and "<details>" not in latest_comment.body:
-            archived_body = f"""<details>
-<summary>🕙 Outdated CI result (auto-archived by bot)</summary>
+    # Get job names from API
+    jobs_resp = requests.get(
+        f"https://api.github.com/repos/{REPO_NAME}/actions/runs/{run.id}/jobs",
+        headers=headers
+    )
+    job_lookup = {
+        normalize_key(job["name"]): job["name"]
+        for job in jobs_resp.json().get("jobs", []) if "name" in job
+    }
 
-{latest_comment.body}
-</details>"""
-            latest_comment.edit(archived_body)
-            print(f"📦 Archived old CI comment on PR #{pr.number}")
+    errors = extract_errors_from_logs(log_resp.content, job_lookup)
 
+    if not errors:
+        print("✅ No CI errors found.")
+        archive_old_ci_comment(pr)
         add_label(pr, "success")
         remove_label(pr, "stale_ci")
         remove_label(pr, "needs_revision")
         return
 
-    # === Build comment body ===
-    comment_body = "🚨 **CI Test Failures Detected**\n\n"
-    for job_name, snippets in job_logs.items():
-        comment_body += f"### 🔧 {job_name}\n"
-        for snippet in snippets:
-            comment_body += f"```text\n{snippet[:1000]}\n```\n\n"
+    # Create error comment
+    comment = "🚨 **CI Test Failures Detected**\n\n"
+    for job, snippet in errors.items():
+        comment += f"### 🔧 {job}\n```text\n{snippet}\n```\n\n"
 
-    # === Check for previous bot comment ===
-    existing_comments = list(pr.get_issue_comments())
-    bot_comments = [c for c in existing_comments if "CI Test Failures Detected" in c.body]
-    latest_comment = bot_comments[-1] if bot_comments else None
+    comments = list(pr.get_issue_comments())
+    for c in reversed(comments):
+        if "CI Test Failures Detected" in c.body:
+            if comment.strip() in c.body:
+                print("🔁 Same errors already posted.")
+                return
+            archive_old_ci_comment(pr)
+            break
 
-    if latest_comment and comment_body.strip() in latest_comment.body:
-        print("🔁 CI errors unchanged — skipping comment.")
-        return
-
-    if latest_comment and "<details>" not in latest_comment.body:
-        archived_body = f"""<details>
-<summary>🕙 Outdated CI result (auto-archived by bot)</summary>
-
-{latest_comment.body}
-</details>"""
-        latest_comment.edit(archived_body)
-        print(f"📦 Archived old CI comment on PR #{pr.number}")
-
-    pr.create_issue_comment(comment_body)
-    print(f"💬 Posted new CI failure comment on PR #{pr.number}")
+    pr.create_issue_comment(comment)
+    print("💬 Posted CI failure comment.")
 
     add_label(pr, "stale_ci")
     add_label(pr, "needs_revision")
     remove_label(pr, "success")
 
-# === PR Detection ===
-def get_unprocessed_items():
-    issues = repo.get_issues(state="open", sort="created", direction="desc")
-    items = []
-    for i in issues:
-        labels = [l.name for l in i.labels]
-        if (
-            i.number not in processed
-            or any(label in labels for label in ["success", "stale_ci", "needs_revision"])
-        ):
-            items.append(i)
-    return items
+# === Component Link Helper ===
+def post_component_link(issue):
+    match = re.search(r"###\s*Component Name\s*\n+([a-zA-Z0-9_]+)", issue.body or "")
+    if match:
+        comp = match.group(1)
+        path = f"plugins/modules/{comp}.py"
+        try:
+            repo.get_contents(path)
+            issue.create_comment(f"Files identified in the description:\n\n- [**{path}**](https://github.com/{REPO_NAME}/blob/main/{path})")
+        except:
+            pass
 
-# === Bot Loop ===
+# === Main Bot Loop ===
+def get_targets():
+    return [
+        i for i in repo.get_issues(state="open")
+        if i.number not in processed or any(l.name in ["success", "needs_revision", "stale_ci"] for l in i.labels)
+    ]
+
 def bot_loop():
     global processed
-    print("🤖 Bot loop started...")
+    print("🤖 Bot loop started")
     while True:
-        for item in get_unprocessed_items():
-            print(f"🔄 Processing #{item.number}...")
-            body = item.body or ""
-            component = parse_component_name(body)
-            if component:
-                file_path = f"plugins/modules/{component}.py"
-                if file_exists(file_path):
-                    comment_with_link(item, file_path)
-
+        for item in get_targets():
+            print(f"🔄 Processing #{item.number}")
+            post_component_link(item)
             if item.pull_request:
                 pr = repo.get_pull(item.number)
                 check_ci_errors_and_comment(pr)
-
             processed.add(item.number)
 
         with open(PROCESSED_FILE, "w") as f:
             json.dump(list(processed), f)
 
-        print("⏳ Sleeping for 3 minutes...")
+        print("⏳ Sleeping 3 min...")
         time.sleep(180)
 
-# === Start Bot ===
+# === Launch Bot ===
 def start_bot():
     Thread(target=bot_loop).start()
 
