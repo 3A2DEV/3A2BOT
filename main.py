@@ -54,19 +54,20 @@ skip_patterns = re.compile(
 
 def extract_error_snippet(lines):
     """
-    Scan through all lines in the log file to extract candidate error snippets.
-    Prioritize snippets containing specific markers.
+    Extracts a snippet from the log around lines that start with "FAILED" or "FATAL".
+    This approach focuses on generic error patterns.
     """
     candidates = []
     for i, line in enumerate(lines):
-        line_lower = line.lower()
-        if any(marker in line_lower for marker in error_markers) and not skip_patterns.search(line_lower):
+        if re.match(r'^(FAILED|FATAL)', line.strip()):
             # Capture a snippet: 3 lines before and 7 lines after the error line
             snippet = "\n".join(lines[max(0, i-3):min(len(lines), i+7)])
             candidates.append((i, snippet))
     
-    if not candidates:
-        return None
+    if candidates:
+        # Optionally, choose the last candidate if multiple errors occur
+        return candidates[-1][1]
+    return None
 
     # Prioritize snippets that include highly specific error markers
     prioritized_markers = ["invalid-documentation-markup", "non-existing option"]
