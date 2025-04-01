@@ -93,7 +93,6 @@ def check_ci_errors_and_comment(pr):
     job_lookup = {}
     failed_jobs = set()
 
-    # Get job names + statuses
     jobs_url = f"https://api.github.com/repos/{REPO_NAME}/actions/runs/{latest_run.id}/jobs"
     jr = requests.get(jobs_url, headers=headers)
     if jr.status_code == 200:
@@ -115,10 +114,8 @@ def check_ci_errors_and_comment(pr):
         remove_label(pr, "needs_revision")
         return
 
-    # Parse logs
     job_logs = {}
     seen_jobs = set()
-    error_snippets = []
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zip_file:
         for file_name in zip_file.namelist():
@@ -134,32 +131,30 @@ def check_ci_errors_and_comment(pr):
                 continue
 
             if matched_job in seen_jobs:
-                continue  # ✅ Already logged one error for this job
+                continue
 
             with zip_file.open(file_name) as f:
                 content = f.read().decode("utf-8", errors="ignore")
                 lines = content.splitlines()
+                job_snippets = []
+
                 for i, line in enumerate(lines):
                     lower_line = line.lower()
-
                     if any(marker in lower_line for marker in [m.lower() for m in error_markers]):
-                        # Skip known noisy marker lines (setup/env logs)
                         if re.search(r"(coverage:|##\[group\]|shell:|Cleaning up orphan processes|core-github-repository-slug)", lower_line):
                             continue
-
                         snippet = "\n".join(lines[max(0, i - 3): i + 7])
-                        error_snippets.append(snippet)
+                        job_snippets.append(snippet)
+                        break
 
-                # Only save the job if actual errors were found
-                if error_snippets:
-                    job_logs[matched_job] = error_snippets
+                if job_snippets:
+                    job_logs[matched_job] = job_snippets
                     seen_jobs.add(matched_job)
 
     if not job_logs:
         print("❌ Some jobs failed, but no errors were found in logs.")
         return
 
-    # Build comment
     comment_body = "🚨 **CI Test Failures Detected**\n\n"
     for job, snippets in job_logs.items():
         comment_body += f"### ⚙️ {job}\n"
@@ -214,7 +209,6 @@ def bot_loop():
                 pr = repo.get_pull(item.number)
                 check_ci_errors_and_comment(pr)
 
-            # Component detection
             body = item.body or ""
             component = parse_component_name(body)
             if component:
