@@ -61,7 +61,7 @@ def extract_error_snippets(lines):
     for i, line in enumerate(lines):
         cleaned = clean_line(line)
         if re.match(r'^(FAILED|FATAL|ERROR:)', cleaned):
-            snippet = "\n".join(lines[max(0, i-1):min(len(lines), i+3)])
+            snippet = "\n".join(lines[max(0, i-1):min(len(lines), i+2)])
             candidates.append(snippet)
     return candidates
 
