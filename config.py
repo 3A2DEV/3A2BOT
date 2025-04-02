@@ -5,5 +5,5 @@
 import os
 
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
-REPO_NAME = "3A2DEV/a2dev.general"
+REPO_NAME = "3A2DEV/ans2dev.general"
 PROCESSED_FILE = "processed.json"
