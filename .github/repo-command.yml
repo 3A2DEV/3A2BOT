@@ -1,0 +1,48 @@
+# Minimum length required for issue/PR descriptions
+minBodyLength: 20
+
+# Enable/disable commands
+commands:
+    wip: true
+    approve: true
+    close: false
+    label: true
+    merge: false
+    requestInfo: true
+
+# Enable/disable automations
+automations:
+    addReadyForReview: true
+    addApprovedLabel: true
+    addChangesRequestedLabel: true
+    addMergedLabel: false
+    requestMoreInfo: true
+    addLabelsOnClose: false
+    welcomeContributor: true
+    welcomeIssue: true
+
+# Configure labels
+labels:
+    wip: "WIP"
+    readyForReview: "needs_review"
+    approved: "approved"
+    changesRequested: "needs_changes"
+    needsMoreInfo: "needs_info"
+    merged: "merged"
+    bug: "bug"
+    feature: "feature"
+    enhancement: "enhancement"
+    fixed: "fixed"
+    implemented: "implemented"
+
+# Configure messages
+messages:
+    welcomeContributor: |
+        Thanks for your first pull request, @{user}! 🎉
+        The team will review your changes soon.
+    welcomeIssue: |
+        Thanks for opening your first issue, @{user}! 🎉
+    requestMoreInfo: |
+        Hey @{user}! Please provide more details in your {type}.
+    moreInfoAdded: |
+        Thanks @{user} for adding more information!
