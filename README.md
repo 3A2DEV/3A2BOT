@@ -1,6 +1,6 @@
 # 3A2BOT Collection bot
 
-![collection](https://img.shields.io/badge/ansible-collection%20bot-blue?logo=ansible&logoColor=white) ![Website](https://img.shields.io/website?url=https%3A%2F%2Fthreea2bot.onrender.com&up_message=alive&up_color=green&down_message=down&down_color=red&logo=render&label=3A2BOT%20status) ![Endpoint Badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fthreea2bot.onrender.com&logo=render&label=3A2BOT%20status)
+![collection](https://img.shields.io/badge/ansible-collection%20bot-blue?logo=ansible&logoColor=white) ![Website](https://img.shields.io/website?url=https%3A%2F%2Fthreea2bot.onrender.com&up_message=alive&up_color=green&down_message=down&down_color=red&logo=render&label=Render%20status) ![Endpoint Badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fthreea2bot.onrender.com&logo=dependabot&label=3A2BOT%20status)
 
 
 **3A2BOT** is an automated GitHub bot designed to monitor **`a2dev.general`** collection CI workflow runs, extract error details from logs, post comments on pull requests with error snippets, and update PR labels based on test results. It also exposes a simple health-check endpoint using [**Flask**](https://flask.palletsprojects.com/en/stable/).
