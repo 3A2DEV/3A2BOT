@@ -7,6 +7,8 @@
 
 **3A2BOT** is an automated GitHub bot designed to monitor **`ans2dev.general`** collection CI workflow runs, extract error details from logs, post comments on pull requests with error snippets, and update PR labels based on test results. It also exposes a simple health-check endpoint using [**Flask**](https://flask.palletsprojects.com/en/stable/).
 
+![D23A2BOT](3A2BOT.svg)
+
 ## Features
 
 - **CI Log Monitoring**:
