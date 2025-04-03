@@ -25,7 +25,7 @@ def extract_error_snippets(lines):
     candidates = []
     for line in lines:
         cleaned = clean_line(line)
-        if re.match(r'^(FAILED|FATAL|fatal|ERROR)', cleaned):
+        if re.match(r'^(FAILED|FATAL|fatal|ERROR|error|WARNING|warning)', cleaned):
             candidates.append(cleaned)
     return candidates
 
